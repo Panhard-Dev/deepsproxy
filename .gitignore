@@ -1,0 +1,11 @@
+node_modules/
+dist/
+deepseek_profile/
+.env
+.env.local
+*.log
+.DS_Store
+coverage/
+.cache/
+.kilo
+start-deepsproxy.sh

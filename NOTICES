@@ -1,0 +1,15 @@
+Third-party notices
+===================
+
+This repository includes portions of source code derived from:
+
+  QwenProxy
+  https://github.com/johngbl/qwenproxy
+  Copyright (c) johngbl
+  License: ISC
+
+  Files affected: src/tools/parser.ts (StreamingToolParser),
+  src/tools/toolcall-tags.ts, src/tools/json.ts (robustParseJSON),
+  and the test suite under src/tests/qwen-*.test.ts.
+
+ISC License: https://opensource.org/licenses/ISC
