@@ -54,6 +54,12 @@ app.use('*', async (c, next) => {
   }
 
   // ...while the OpenAI-compatible proxy keeps requiring the strong API_KEY.
+  // Exception: requests from this very machine (the Laizy CLI etc.) are trusted —
+  // the key exists to keep other devices on the network out.
+  if (c.req.path.startsWith('/v1/')) {
+    const remote = (c.env as any)?.incoming?.socket?.remoteAddress || '';
+    if (['::1', '127.0.0.1', '::ffff:127.0.0.1'].includes(remote)) return next();
+  }
   const apiKey = process.env.API_KEY;
   if (apiKey) {
     if (!providedKey || providedKey !== apiKey) {
