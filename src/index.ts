@@ -40,8 +40,9 @@ function modelEntry(id: string) {
 app.use('*', cors());
 
 app.use('*', async (c, next) => {
-  // The admin HTML page and the health check are public; data endpoints stay protected.
+  // Public: admin page, health check, and the model catalog (read-only).
   if (c.req.path === '/admin' || c.req.path === '/health') return next();
+  if (c.req.method === 'GET' && c.req.path === '/v1/models') return next();
   const authHeader = c.req.header('Authorization');
   const xApiKey = c.req.header('X-API-Key');
   const providedKey = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : xApiKey;
