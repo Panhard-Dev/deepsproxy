@@ -1,84 +1,121 @@
 /*
  * File: playwright.ts
  * Project: deepsproxy
- * Author: Pedro Farias
- * Created: 2026-05-09
- * 
- * Last Modified: Sat May 09 2026
- * Modified By: Pedro Farias
+ * Account-stacked browser layer (QwenProxy-style): ONE shared Chromium, one
+ * isolated BrowserContext per account (cookies via storageState), smart
+ * acquisition for requests and manual headed login support.
  */
 
-import { chromium, BrowserContext, Page } from 'playwright';
+import { chromium, Browser, BrowserContext, Page } from 'playwright';
+import fs from 'fs';
 import path from 'path';
 
-let context: BrowserContext | null = null;
-export let activePage: Page | null = null;
-let currentHeaders: Record<string, string> = {};
+let browser: Browser | null = null;
+const contexts = new Map<string, { context: BrowserContext; page: Page }>();
 
-export async function initPlaywright(headless = true) {
-  if (process.env.TEST_MOCK_PLAYWRIGHT) return;
-  if (context) {
-    return;
-  }
-
-  const profilePath = path.resolve('deepseek_profile');
-
-  context = await chromium.launchPersistentContext(profilePath, {
-    headless,
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
-    args: [
-      '--disable-blink-features=AutomationControlled',
-      '--exclude-switches=enable-automation',
-      '--disable-infobars',
-      '--no-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-    ],
-  });
-
-  // Keep an active page to fetch PoW headers on demand
-  activePage = await context.newPage();
+export interface AccountCreds {
+  email: string;
+  password: string;
+  statePath: string;
+  hasState: boolean;
 }
 
-export async function closePlaywright() {
-  if (process.env.TEST_MOCK_PLAYWRIGHT) return;
-  if (context) {
-    await context.close();
-    context = null;
-    activePage = null;
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+const ARGS = [
+  '--disable-blink-features=AutomationControlled',
+  '--exclude-switches=enable-automation',
+  '--disable-infobars',
+  '--no-sandbox',
+  '--disable-dev-shm-usage',
+  '--disable-gpu',
+];
+
+async function ensureBrowser(): Promise<Browser> {
+  if (!browser || !browser.isConnected()) {
+    browser = await chromium.launch({ headless: process.env.PLAYWRIGHT_HEADLESS !== 'false', args: ARGS });
+  }
+  return browser;
+}
+
+/** Get (or create) the isolated context+page for an account, restoring its saved session. */
+export async function getAccountPage(acct: AccountCreds & { legacyImportPending?: boolean }): Promise<Page> {
+  const existing = contexts.get(acct.email);
+  if (existing) return existing.page;
+
+  const b = await ensureBrowser();
+
+  // One-time migration: pull the live session out of the old persistent profile.
+  if ((acct as any).legacyImportPending) {
+    try {
+      const legacy = await chromium.launchPersistentContext(path.resolve('deepseek_profile'), {
+        headless: true, args: ARGS,
+      });
+      fs.mkdirSync(path.dirname(acct.statePath), { recursive: true });
+      await legacy.storageState({ path: acct.statePath });
+      await legacy.close().catch(() => {});
+      const { markLegacyImported } = await import('./accounts.ts');
+      markLegacyImported(acct.email);
+      console.log(`[Accounts] Imported legacy profile session for ${acct.email}.`);
+      acct.hasState = true;
+    } catch (e: any) {
+      console.warn('[Accounts] Legacy session import failed (will auto-login instead):', e?.message);
+    }
+  }
+
+  const useStore = fs.existsSync(acct.statePath);
+  const context = await b.newContext({
+    storageState: useStore ? acct.statePath : undefined,
+    userAgent: UA,
+    args: ARGS,
+  });
+  const page = await context.newPage();
+  contexts.set(acct.email, { context, page });
+  return page;
+}
+
+function fsExists(p: string): boolean {
+  try { return fs.existsSync(p); } catch { return false; }
+}
+
+/** Persist an account's session so the next context restores it. */
+export async function saveAccountState(email: string): Promise<void> {
+  const entry = contexts.get(email);
+  if (!entry) return;
+  const acct = (globalThis as any)._accountsStore?.accounts?.find((a: any) => a.email === email);
+  if (!acct) return;
+  fs.mkdirSync(path.dirname(acct.statePath), { recursive: true });
+  await entry.context.storageState({ path: acct.statePath });
+}
+
+/** Close and forget an account's context (e.g. after removal). */
+export async function closeAccount(email: string): Promise<void> {
+  const entry = contexts.get(email);
+  if (entry) {
+    try { await entry.context.close(); } catch {}
+    contexts.delete(email);
   }
 }
 
 /**
- * Ensures the session is valid and extracts headers, PoW, and session ID.
+ * Capture auth headers + PoW for an account page by triggering a real
+ * completion request in the UI (and aborting it so history stays clean).
  */
-export async function getDeepSeekHeaders(forceNew = false): Promise<{ headers: Record<string, string>, chatSessionId: string, parentMessageId: number | null }> {
-  if (process.env.TEST_MOCK_PLAYWRIGHT) {
-    // Generate a unique session ID if requested for testing isolation
-    const mockSessionId = process.env.TEST_SESSION_ID || 'mock-session';
-    return { headers: { authorization: 'Bearer MOCK' }, chatSessionId: mockSessionId, parentMessageId: null };
-  }
-
-  if (!activePage) {
-    throw new Error('Playwright not initialized');
-  }
-
-  // Navigate to deepseek chat. If forceNew is true or we're not on deepseek, go to home page.
-  const currentUrl = activePage.url();
+export async function getDeepSeekHeaders(
+  page: Page,
+  forceNew = false
+): Promise<{ headers: Record<string, string>; chatSessionId: string; parentMessageId: number | null }> {
+  const currentUrl = page.url();
   const isOnDeepSeek = currentUrl.includes('chat.deepseek.com');
   const isOnSpecificChat = isOnDeepSeek && /\/chat\/\d+/.test(currentUrl);
 
   if (!isOnDeepSeek || forceNew || isOnSpecificChat) {
-    await activePage.goto('https://chat.deepseek.com/', { waitUntil: 'domcontentloaded' });
+    await page.goto('https://chat.deepseek.com/', { waitUntil: 'domcontentloaded' });
   }
 
-  // Wait for the chat input. Keep this timeout short: when DeepSeek shows an
-  // account/login/suspension banner there is no input, and retrying the same
-  // browser state just makes OpenAI clients look hung.
   const chatInputSelector = 'textarea, [role="textbox"], [contenteditable="true"]';
   const chatInputTimeoutMs = Number(process.env.DEEPSPROXY_CHAT_INPUT_TIMEOUT_MS || '8000');
-  await activePage.waitForSelector(chatInputSelector, { timeout: chatInputTimeoutMs }).catch(async () => {
-    const pageState = await activePage!.evaluate(() => {
+  await page.waitForSelector(chatInputSelector, { timeout: chatInputTimeoutMs }).catch(async () => {
+    const state = await page.evaluate(() => {
       const fullBodyText = document.body?.innerText || '';
       const bodyText = fullBodyText.slice(0, 5000);
       const suspensionMatch = fullBodyText.match(/Due to violation of user policies, your account has been suspended until\s+([^\.\n]+)\.\s*If you have any questions, please Contact us\./i);
@@ -88,8 +125,6 @@ export async function getDeepSeekHeaders(forceNew = false): Promise<{ headers: R
         url: location.href,
         title: document.title,
         bodyText,
-        textareaCount: document.querySelectorAll('textarea').length,
-        inputCount: document.querySelectorAll('input, textarea, [role="textbox"], [contenteditable]').length,
         suspended: /suspended until|violation of user policies|account has been suspended/i.test(fullBodyText),
         suspendedUntil,
         suspensionOriginal,
@@ -97,12 +132,9 @@ export async function getDeepSeekHeaders(forceNew = false): Promise<{ headers: R
       };
     }).catch((e: any) => ({ evaluateError: e?.message || String(e) }));
 
-    const state: any = pageState;
     if (state?.suspended) {
-      const until = typeof state.suspendedUntil === 'string' && state.suspendedUntil.trim() ? state.suspendedUntil.trim() : '';
-      const original = typeof state.suspensionOriginal === 'string' && state.suspensionOriginal.trim() ? state.suspensionOriginal.trim() : '';
-      const detail = original || (until ? `Due to violation of user policies, your account has been suspended until ${until}.` : 'DeepSeek reported an account suspension.');
-      throw new Error(`DeepSeek account is suspended; chat input is unavailable. Original DeepSeek message: ${detail}`);
+      const original = state.suspensionOriginal || (state.suspendedUntil ? `Due to violation of user policies, your account has been suspended until ${state.suspendedUntil}.` : 'DeepSeek reported an account suspension.');
+      throw new Error(`DeepSeek account is suspended; chat input is unavailable. Original DeepSeek message: ${original}`);
     }
     if (state?.loginRequired) {
       throw new Error('DeepSeek login is required; chat input is unavailable.');
@@ -115,7 +147,6 @@ export async function getDeepSeekHeaders(forceNew = false): Promise<{ headers: R
 
     const routeHandler = async (route: any, request: any) => {
       clearTimeout(timeout);
-      
       const reqHeaders = request.headers();
       let uiSessionId = '';
       let uiParentMessageId: number | null = null;
@@ -124,15 +155,9 @@ export async function getDeepSeekHeaders(forceNew = false): Promise<{ headers: R
       if (postData) {
         try {
           const payload = JSON.parse(postData);
-          if (payload.chat_session_id) {
-            uiSessionId = payload.chat_session_id;
-          }
-          if (payload.parent_message_id !== undefined) {
-            uiParentMessageId = payload.parent_message_id;
-          }
-        } catch (e) {
-          // ignore parsing error
-        }
+          if (payload.chat_session_id) uiSessionId = payload.chat_session_id;
+          if (payload.parent_message_id !== undefined) uiParentMessageId = payload.parent_message_id;
+        } catch {}
       }
 
       const extractedHeaders = {
@@ -140,25 +165,60 @@ export async function getDeepSeekHeaders(forceNew = false): Promise<{ headers: R
         'x-hif-dliq': reqHeaders['x-hif-dliq'] || '',
         'x-hif-leim': reqHeaders['x-hif-leim'] || '',
         'authorization': reqHeaders['authorization'] || '',
-        'cookie': reqHeaders['cookie'] || ''
+        'cookie': reqHeaders['cookie'] || '',
       };
 
-      currentHeaders = extractedHeaders;
-
-      // Abort to prevent polluting chat history
       await route.abort('aborted');
-      
-      // Cleanup route
-      await activePage!.unroute('**/api/v0/chat/completion', routeHandler);
-
+      await page.unroute('**/api/v0/chat/completion', routeHandler);
       resolve({ headers: extractedHeaders, chatSessionId: uiSessionId, parentMessageId: uiParentMessageId });
     };
 
-    activePage!.route('**/api/v0/chat/completion', routeHandler).then(() => {
-      // Trigger PoW generation by typing and hitting enter
-      activePage!.fill('textarea', 'a').then(() => {
-        activePage!.keyboard.press('Enter');
-      });
+    page.route('**/api/v0/chat/completion', routeHandler).then(() => {
+      page.fill('textarea', 'a').then(() => page.keyboard.press('Enter'));
     });
   });
+}
+
+/** Kept for compatibility with tests/tooling that referenced the single-page API. */
+export async function initPlaywright(): Promise<void> {
+  await ensureBrowser();
+}
+
+export async function closePlaywright(): Promise<void> {
+  for (const [, entry] of contexts) {
+    try { await entry.context.close(); } catch {}
+  }
+  contexts.clear();
+  if (browser) {
+    try { await browser.close(); } catch {}
+    browser = null;
+  }
+}
+
+/**
+ * Manual headed login for an account (fallback when auto-login fails):
+ * opens a visible window on that account's context; resolves when the user
+ * closes the window, after saving the session.
+ */
+export async function openHeadedLogin(acct: AccountCreds): Promise<void> {
+  const b = await chromium.launch({ headless: false, args: ARGS });
+  const useStore = acct.hasState && fsExists(acct.statePath);
+  const context = await b.newContext({
+    storageState: useStore ? acct.statePath : undefined,
+    userAgent: UA,
+    args: ARGS,
+  });
+  const page = await context.newPage();
+  await page.goto('https://chat.deepseek.com/', { waitUntil: 'domcontentloaded' });
+  console.log(`[Login] Janela aberta para ${acct.email}. Faça login e feche a janela.`);
+  await new Promise<void>((resolve) => {
+    const check = setInterval(async () => {
+      if (!b.isConnected()) { clearInterval(check); resolve(); }
+    }, 1000);
+    b.on('disconnected', () => { clearInterval(check); resolve(); });
+  });
+  const dir = path.dirname(acct.statePath);
+  fs.mkdirSync(dir, { recursive: true });
+  await context.storageState({ path: acct.statePath });
+  await b.close().catch(() => {});
 }

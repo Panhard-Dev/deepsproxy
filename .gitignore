@@ -9,3 +9,5 @@ coverage/
 .cache/
 .kilo
 start-deepsproxy.sh
+accounts.json
+accounts_storage/

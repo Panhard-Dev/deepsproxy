@@ -18,6 +18,10 @@ import { compressMessages } from '../utils/compression.ts';
 import { StreamingToolParser } from '../tools/parser.ts';
 import { wrapToolCallPayload } from '../tools/toolcall-tags.ts';
 import { createDSMLNormalizer } from '../utils/dsml.ts';
+import { ensureDeepSeekLogin } from '../services/autologin.ts';
+import { recordUsage, setSessionState } from '../services/usage.ts';
+import { pickAccount, reportSuccess as reportAccountSuccess, reportFailure as reportAccountFailure } from '../services/accounts.ts';
+import { getAccountPage, saveAccountState } from '../services/playwright.ts';
 
 type EmitChunk = (data: any) => Promise<void>;
 
@@ -341,6 +345,17 @@ export async function chatCompletions(c: Context) {
 
       while (attempt < maxAttempts) {
         attempt++;
+        // Account stacking: pick the healthiest account for THIS attempt —
+        // failures in previous attempts rotate to the next one automatically.
+        let acct: ReturnType<typeof pickAccount>;
+        let page: import('playwright').Page;
+        try {
+          acct = pickAccount();
+          page = await getAccountPage(acct);
+        } catch (e: any) {
+          return c.json({ error: { message: e?.message || 'No account available', type: 'no_account_available', code: 'no_account_available' } }, 429);
+        }
+        const attemptStart = Date.now();
         const telemetry = getModelTelemetry(body.model);
         const currentTargetLimit = telemetry.detectedLimit;
 
@@ -367,7 +382,7 @@ export async function chatCompletions(c: Context) {
 
         try {
           console.log(`[Chat] Attempt ${attempt}/${maxAttempts} (non-stream) with prompt length ${promptSize} chars.`);
-          const result = await createDeepSeekStream(finalPrompt, isThinkingModel, isProModel, null);
+          const result = await createDeepSeekStream(finalPrompt, isThinkingModel, isProModel, null, page);
 
           const parsed = await parseDeepSeekStreamToOpenAI(
             result.stream,
@@ -381,11 +396,16 @@ export async function chatCompletions(c: Context) {
           if (parsed.content === '' && parsed.toolCalls.length === 0) {
             console.warn(`[Chat] Attempt ${attempt} (non-stream) response was empty.`);
             recordFailure(body.model, promptSize, 'empty response');
+            recordUsage(body.model, false, promptTokens, 0, Date.now() - attemptStart, 'empty response');
             continue;
           }
 
           // Success!
           recordSuccess(body.model, promptSize);
+          recordUsage(body.model, true, parsed.usage.prompt_tokens, parsed.usage.completion_tokens, Date.now() - attemptStart);
+          setSessionState(true);
+          reportAccountSuccess(acct.email);
+          saveAccountState(acct.email).catch(() => {});
           parsedResult = parsed;
           finalUiSessionId = result.uiSessionId;
           break;
@@ -393,6 +413,25 @@ export async function chatCompletions(c: Context) {
           console.error(`[Chat] Attempt ${attempt} (non-stream) failed:`, err.message);
           lastError = err;
           recordFailure(body.model, promptSize, err?.message);
+          recordUsage(body.model, false, promptTokens, 0, Date.now() - attemptStart, err?.message);
+          if (/login is required/i.test(err?.message || '')) setSessionState(false);
+          // Smart account rotation: classify the failure for the account manager.
+          if (/429|high demand|quota|rate limit|too many/i.test(err?.message || '')) {
+            reportAccountFailure(acct.email, 'quota', err?.message || 'quota');
+          } else if (/login is required/i.test(err?.message || '')) {
+            reportAccountFailure(acct.email, 'login_failed', err?.message || 'login');
+            // Session expired: try automatic re-login before the next attempt.
+            if (attempt < maxAttempts) {
+              try {
+                const ok = await ensureDeepSeekLogin(page, acct.email, acct.password);
+                if (ok) { await saveAccountState(acct.email); reportAccountSuccess(acct.email); }
+              } catch (e: any) {
+                console.error('[AutoLogin] could not re-login:', e?.message);
+              }
+            }
+          } else {
+            reportAccountFailure(acct.email, 'network', err?.message || 'network');
+          }
           if (attempt >= maxAttempts) {
             break;
           }
@@ -436,6 +475,16 @@ export async function chatCompletions(c: Context) {
 
     while (attempt < maxAttempts) {
       attempt++;
+      // Account stacking: pick the healthiest account for THIS attempt.
+      let acct: ReturnType<typeof pickAccount>;
+      let page: import('playwright').Page;
+      try {
+        acct = pickAccount();
+        page = await getAccountPage(acct);
+      } catch (e: any) {
+        return c.json({ error: { message: e?.message || 'No account available', type: 'no_account_available', code: 'no_account_available' } }, 429);
+      }
+      const attemptStart = Date.now();
       const telemetry = getModelTelemetry(body.model);
       const currentTargetLimit = telemetry.detectedLimit;
 
@@ -458,7 +507,7 @@ export async function chatCompletions(c: Context) {
 
       try {
         console.log(`[Chat] Attempt ${attempt}/${maxAttempts} (stream) with prompt length ${promptSizeUsed} chars.`);
-        const result = await createDeepSeekStream(finalPrompt, isThinkingModel, isProModel, null);
+        const result = await createDeepSeekStream(finalPrompt, isThinkingModel, isProModel, null, page);
 
         // Peek the stream to verify it has content
         const { isEmpty, peekedStream } = await peekStream(result.stream);
@@ -472,11 +521,31 @@ export async function chatCompletions(c: Context) {
         recordSuccess(body.model, promptSizeUsed);
         deepSeekStream = peekedStream;
         uiSessionId = result.uiSessionId;
+        reportAccountSuccess(acct.email);
+        saveAccountState(acct.email).catch(() => {});
         break;
       } catch (err: any) {
         console.error(`[Chat] Attempt ${attempt} (stream) failed:`, err.message);
         lastError = err;
         recordFailure(body.model, promptSizeUsed, err?.message);
+        recordUsage(body.model, false, Math.ceil(promptSizeUsed / 3.5), 0, Date.now() - attemptStart, err?.message);
+        if (/login is required/i.test(err?.message || '')) setSessionState(false);
+        // Smart account rotation: classify the failure for the account manager.
+        if (/429|high demand|quota|rate limit|too many/i.test(err?.message || '')) {
+          reportAccountFailure(acct.email, 'quota', err?.message || 'quota');
+        } else if (/login is required/i.test(err?.message || '')) {
+          reportAccountFailure(acct.email, 'login_failed', err?.message || 'login');
+          if (attempt < maxAttempts) {
+            try {
+              const ok = await ensureDeepSeekLogin(page, acct.email, acct.password);
+              if (ok) { await saveAccountState(acct.email); reportAccountSuccess(acct.email); }
+            } catch (e: any) {
+              console.error('[AutoLogin] could not re-login:', e?.message);
+            }
+          }
+        } else {
+          reportAccountFailure(acct.email, 'network', err?.message || 'network');
+        }
         if (attempt >= maxAttempts) {
           break;
         }
@@ -499,19 +568,28 @@ export async function chatCompletions(c: Context) {
         await streamWriter.write(`data: ${JSON.stringify(data)}\n\n`);
       };
 
-      await writeEvent(makeChunk(completionId, body.model, { role: 'assistant', content: '' }));
+      const streamStart = Date.now();
+      try {
+        await writeEvent(makeChunk(completionId, body.model, { role: 'assistant', content: '' }));
 
-      const parsed = await parseDeepSeekStreamToOpenAI(
-        deepSeekStream!,
-        completionId,
-        body.model,
-        promptTokens,
-        uiSessionId,
-        (body as any).tools || [],
-        writeEvent
-      );
+        const parsed = await parseDeepSeekStreamToOpenAI(
+          deepSeekStream!,
+          completionId,
+          body.model,
+          promptTokens,
+          uiSessionId,
+          (body as any).tools || [],
+          writeEvent
+        );
 
-      await writeEvent(makeChunk(completionId, body.model, {}, parsed.finishReason, parsed.usage));
+        recordUsage(body.model, true, parsed.usage.prompt_tokens, parsed.usage.completion_tokens, Date.now() - streamStart);
+        setSessionState(true);
+
+        await writeEvent(makeChunk(completionId, body.model, {}, parsed.finishReason, parsed.usage));
+      } catch (err: any) {
+        recordUsage(body.model, false, promptTokens, 0, Date.now() - streamStart, err?.message);
+        throw err;
+      }
       await streamWriter.write('data: [DONE]\n\n');
     });
   } catch (err: any) {

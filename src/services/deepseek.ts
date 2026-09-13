@@ -9,6 +9,7 @@
  */
 
 import { getDeepSeekHeaders } from './playwright.ts';
+import type { Page } from 'playwright';
 
 // In-memory state to track the last message ID per session to avoid overwriting
 // Use globalThis to ensure it survives module reloads in some test environments
@@ -36,11 +37,13 @@ export async function createDeepSeekStream(
   prompt: string,
   enableThinking: boolean,
   isProModel: boolean = false,
-  forcedParentId?: number | null
+  forcedParentId?: number | null,
+  page?: Page
 ): Promise<{ stream: ReadableStream, headers: Record<string, string>, uiSessionId: string }> {
-  // Obtain fresh headers/PoW from Playwright
+  // Obtain fresh headers/PoW from the account's Playwright page
   // If forcedParentId is null, it means we are explicitly starting a new session
-  const { headers, chatSessionId, parentMessageId } = await getDeepSeekHeaders(forcedParentId === null);
+  if (!page) throw new Error('No account page provided');
+  const { headers, chatSessionId, parentMessageId } = await getDeepSeekHeaders(page, forcedParentId === null);
 
   // Determine the actual parent ID:
   // 1. If forcedParentId is provided (even if null), use it.
