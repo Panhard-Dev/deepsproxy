@@ -1,240 +1,220 @@
-# DeepsProxy
+<div align="center">
 
-Proxy API local compatível com **OpenAI** que roteia requisições para os modelos do **DeepSeek** (`chat.deepseek.com`) usando automação de navegador via Playwright. Feito para rodar na sua máquina e ser usado por qualquer cliente/SDK OpenAI-compatible (IDEs, agentes CLI, etc.).
+# 🚀 DeepsProxy
 
-```
-Cliente (SDK OpenAI / agente) ──HTTP──▶ DeepsProxy ──Playwright──▶ chat.deepseek.com
-```
+**Proxy local compatível com OpenAI para os modelos do DeepSeek — com tool calling à prova de bala.**
+
+[![CI](https://img.shields.io/github/actions/workflow/status/Panhard-Dev/deepsproxy/ci.yml?branch=main&label=tests&style=flat-square)](https://github.com/Panhard-Dev/deepsproxy/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Node](https://img.shields.io/badge/node-%3E%3D20-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Hono](https://img.shields.io/badge/Hono-4.x-E36002?style=flat-square)](https://hono.dev/)
+[![Playwright](https://img.shields.io/badge/Playwright-1.59-2EBA6B?style=flat-square&logo=playwright&logoColor=white)](https://playwright.dev/)
+
+*Exponha os modelos do `chat.deepseek.com` como uma API OpenAI local — qualquer SDK, qualquer cliente, tool calling incluído.*
+
+</div>
 
 ---
+
+```mermaid
+flowchart LR
+    A["🖥️ Cliente OpenAI<br/>(SDK / IDE / agente)"] -->|"HTTP /v1/chat/completions"| B["⚡ DeepsProxy<br/>Hono + TypeScript"]
+    B -->|"prompt + headers/PoW"| C["🎭 Playwright<br/>(sessão persistente)"]
+    C -->|"navegador logado"| D["🌊 chat.deepseek.com"]
+    D -->|"stream SSE"| C
+    C --> B
+    B -->|"'tool_calls' estruturado"| A
+```
 
 ## ✨ Destaques
 
-- **100% compatível com OpenAI** — `/v1/chat/completions`, `/v1/models`, `/health`, autenticação por API key opcional e streaming SSE no formato `chat.completion.chunk`.
-- **Tool calling robusto** — parser de tool calls resiliente a: streams fragmentados, JSON malformado, tags faltando, `</tool_call>` dentro de strings, nomes fuzzy (`getWeather` → `get_weather`), chamadas sem tags e JSON duplamente escapado.
-- **Normalizador DSML** — quando o modelo vaza o formato interno de tool call dele (`<｜｜DSML｜｜ invoke ...>`) como texto, o proxy converte para `tool_calls` estruturado automaticamente, em tempo de stream.
-- **Contexto configurável e honesto** — limite de contexto definido por configuração (`CONTEXT_TOKENS`), nunca "adivinhado" por tentativa-e-erro. Falhas de rede **nunca** derrubam o limite (sem envenenamento de telemetria).
-- **Truncamento inteligente** — quando o histórico excede o limite, mensagens antigas são descartadas com aviso explícito, preservando **sempre** os pares `assistant(tool_calls) + tool` (unidades atômicas) e o system prompt.
-- **Rejeição limpa de input gigante** — prompt acima do limite retorna `400 context_length_exceeded` no formato OpenAI, sem queimar tentativas de navegador.
-- **Sessão persistente** — login uma única vez pelo navegador; a sessão fica salva em `deepseek_profile/`.
-- **Suite de testes de verdade** — 95 testes cobrindo o parser (streams fragmentados, recuperação de JSON, cap de chamadas, chamadas sem wrapper, etc.).
+- 🤖 **100% compatível com OpenAI** — `/v1/chat/completions`, `/v1/models`, `/health`, streaming SSE e API key opcional
+- 🔨 **Tool calling robusto** — sobrevive a streams fragmentados, JSON malformado, tags faltando, nomes fuzzy (`getWeather` → `get_weather`) e chamadas sem tags
+- 🧬 **Normalizador DSML** — converte o formato interno que o modelo às vezes vaza (`<｜｜DSML｜｜ invoke ...>`) em `tool_calls` estruturado, em tempo real
+- 📏 **Contexto gigante configurável** — `CONTEXT_TOKENS` (default 1M); a janela é **configuração, não adivinhação**: erro de rede nunca encolhe seu contexto
+- ✂️ **Truncamento inteligente** — preserva pares atômicos `assistant(tool_calls) + tool`, mantém as mensagens recentes e avisa quando corta
+- 🧾 **Rejeição limpa** — input gigante demais volta como `400 context_length_exceeded` no formato OpenAI, sem queimar navegador
+- 💾 **Sessão persistente** — login uma vez no navegador, sessão salva para sempre em `deepseek_profile/`
+- ✅ **95 testes** rodando no CI
 
----
-
-## 📋 Pré-requisitos
-
-| Dependência | Versão mínima |
-|-------------|---------------|
-| Node.js | v20.x |
-| npm | v9.x |
-| Chromium do Playwright | `npx playwright install chromium` |
-
----
-
-## 🚀 Instalação
+## 🚀 Começando
 
 ```bash
+# 1. Clonar e instalar
 git clone https://github.com/Panhard-Dev/deepsproxy.git
 cd deepsproxy
 npm install
 npx playwright install chromium
-```
 
-## 🔐 Login (primeira vez)
-
-```bash
+# 2. Login no DeepSeek (abre navegador visível — feche a janela quando logar)
 npm run login
+
+# 3. Subir o servidor
+npm start
 ```
 
-Abre um **navegador visível** no `chat.deepseek.com`. Faça login normalmente (verificação humana incluída, se aparecer), e quando estiver na tela do chat, **feche a janela**. A sessão fica salva em `deepseek_profile/` e persiste entre reinícios.
-
-Se o servidor estiver rodando e travar o perfil, use o script de limpeza:
-
-```bash
-bash clean-and-login.sh
-```
-
-Ele encerra processos antigos, remove os locks do perfil e abre o login de novo.
+> Servidor travando o perfil? `bash clean-and-login.sh` limpa processos/locks e reabre o login.
 
 ## ⚙️ Configuração
 
-Crie um `.env` na raiz (veja `.env.example`):
-
-```env
-# Porta do servidor (default: 3000)
-PORT=3000
-
-# Chave de API para proteger endpoints (opcional — remova para desativar)
-API_KEY=sua-chave-secreta-aqui
-
-# Configurações Playwright
-PLAYWRIGHT_HEADLESS=true
-PLAYWRIGHT_TIMEOUT=30000
-
-# Logging
-LOG_LEVEL=info
-
-# Limite de contexto em tokens (o proxy NUNCA encurta o histórico
-# por baixo disso sem avisar; truncamento só acima disso)
-CONTEXT_TOKENS=1000000
-```
+Crie um `.env` na raiz (ou copie o [`.env.example`](.env.example)):
 
 | Variável | Descrição | Default |
 |----------|-----------|---------|
 | `PORT` | Porta HTTP do servidor | `3000` |
-| `API_KEY` | Chave exigida via `Authorization: Bearer` ou `X-API-Key` | *(sem auth)* |
-| `PLAYWRIGHT_HEADLESS` | Executar o navegador em modo headless | `true` |
-| `PLAYWRIGHT_TIMEOUT` | Timeout de operações do Playwright (ms) | `30000` |
-| `CONTEXT_TOKENS` | Janela de contexto em tokens (≈ 3.5 chars/token) | `64000` |
+| `API_KEY` | Exige `Authorization: Bearer` ou `X-API-Key` | *(sem auth)* |
+| `PLAYWRIGHT_HEADLESS` | Navegador headless | `true` |
+| `PLAYWRIGHT_TIMEOUT` | Timeout do Playwright (ms) | `30000` |
+| `CONTEXT_TOKENS` | Janela de contexto em tokens | `1000000` |
 | `DEEPSEEK_TOOL_OPEN` / `DEEPSEEK_TOOL_CLOSE` | Tags canônicas de tool call | `<tool_call>` / `</tool_call>` |
-| `TOOLCALL_DEBUG` | `1` habilita logs de debug do parser | *(off)* |
-
-## ▶️ Executando
-
-```bash
-npm start          # produção (headless)
-npm run dev        # desenvolvimento com hot-reload
-bash restart-server.sh   # reinicia limpo (mata processos antigos e locks)
-```
-
----
+| `TOOLCALL_DEBUG` | `1` = logs de debug do parser | *(off)* |
 
 ## 📡 API
 
-### `GET /health`
-
-```json
-{ "status": "ok" }
-```
-
-### `GET /v1/models`
-
-Lista os modelos expostos:
+<details open>
+<summary><b>GET /v1/models</b></summary>
 
 | ID | Modelo real | Modo |
 |----|-------------|------|
 | `deepseek-v4-flash` | Flash | normal |
 | `deepseek-v4-flash-thinking` | Flash | raciocínio |
-| `deepseek-v4.1-flash` | Flash | normal (alias) |
-| `deepseek-v4.1-flash-thinking` | Flash | raciocínio (alias) |
+| `deepseek-v4.1-flash` | Flash | normal *(alias)* |
+| `deepseek-v4.1-flash-thinking` | Flash | raciocínio *(alias)* |
 | `deepseek-v4-pro` | Pro/Expert | normal |
 | `deepseek-v4-pro-thinking` | Pro/Expert | raciocínio |
 
-O roteamento é pelo nome: contém `thinking` → ativa o modo de raciocínio; contém `pro` → usa o modelo Expert; caso contrário → Flash.
+O roteamento é pelo nome: `thinking` → ativa raciocínio; `pro` → modelo Expert.
+</details>
 
-### `POST /v1/chat/completions`
+<details open>
+<summary><b>POST /v1/chat/completions</b></summary>
 
-Request no formato OpenAI padrão:
+```bash
+curl http://localhost:3000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek-v4-flash",
+    "messages": [{"role": "user", "content": "Olá!"}],
+    "stream": true
+  }'
+```
 
-```json
+Em SDKs OpenAI, basta apontar o `baseURL`:
+
+```ts
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://localhost:3000/v1',
+  apiKey: 'sua-api-key',
+});
+
+const res = await client.chat.completions.create({
+  model: 'deepseek-v4-flash',
+  messages: [{ role: 'user', content: 'Explique TypeScript' }],
+});
+```
+
+</details>
+
+<details>
+<summary><b>Tool calling (exemplo completo)</b></summary>
+
+```jsonc
+// 1. Declare as tools (formato OpenAI padrão)
 {
   "model": "deepseek-v4-flash",
-  "messages": [{ "role": "user", "content": "Olá!" }],
+  "messages": [{ "role": "user", "content": "Tempo em São Paulo?" }],
   "tools": [{
     "type": "function",
     "function": {
       "name": "get_weather",
       "description": "Obter previsão do tempo",
-      "parameters": { "type": "object", "properties": { "location": { "type": "string" } }, "required": ["location"] }
+      "parameters": {
+        "type": "object",
+        "properties": { "location": { "type": "string" } },
+        "required": ["location"]
+      }
     }
-  }],
-  "tool_choice": "auto",
-  "stream": true
-}
-```
-
-Resposta com tool call (`finish_reason: "tool_calls"`, `arguments` como string JSON):
-
-```json
-{
-  "choices": [{
-    "message": {
-      "role": "assistant",
-      "content": null,
-      "tool_calls": [{
-        "index": 0,
-        "id": "call_xxx",
-        "type": "function",
-        "function": { "name": "get_weather", "arguments": "{\"location\":\"São Paulo\"}" }
-      }]
-    },
-    "finish_reason": "tool_calls"
   }]
 }
+
+// 2. O modelo responde
+// finish_reason: "tool_calls"
+// { "tool_calls": [{ "id": "call_x", "function": { "name": "get_weather",
+//    "arguments": "{\"location\":\"São Paulo\"}" } }] }
+
+// 3. Execute e devolva: role "tool" + tool_call_id correspondente
 ```
 
-Para continuar a conversa, devolva o resultado como mensagem `role: "tool"` com o `tool_call_id` correspondente (formato OpenAI padrão).
+> **Nota:** as ferramentas são executadas pelo **cliente** (seu agente) — o proxy só traduz o protocolo.
 
-### Como usar em clientes
+</details>
 
-```bash
-curl http://localhost:3000/v1/chat/completions \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"Olá!"}]}'
-```
+## 🔧 O que o parser tolera
 
-Em SDKs OpenAI, aponte o `baseURL` para `http://localhost:3000/v1`.
-
----
-
-## 🔧 Tool calling — o que o proxy tolera
-
-O proxy injeta as ferramentas declaradas pelo cliente no prompt e interpreta a resposta do modelo. Formatos aceitos:
-
-- `<tool_call>{"name": "...", "arguments": {...}}</tool_call>` (canônico, incluindo variações `tool_calls`/`tool` e case-insensitive)
-- **Vazamento DSML** do formato interno do DeepSeek (`<｜｜DSML｜｜ invoke name="...">` com `<parameter>`), convertido em tempo real
-- JSON malformado: chaves/aspas faltando, arrays não fechados, JSON duplamente escapado
-- Nomes fuzzy: `readFile` → `read_file` (caso único no schema)
-- Chamadas sem tags (JSON cru no texto) e múltiplas chamadas por turno
-- Tag de fechamento dentro de strings de argumentos (não trunca)
-
-> **Importante:** as ferramentas são executadas **pelo cliente** (teu agente), não pelo proxy. O proxy só traduz o protocolo. Se um comando é bloqueado pelo modo de permissão do teu agente, é lá que se resolve.
-
----
+| Situação do modelo | Comportamento |
+|--------------------|---------------|
+| Stream fragmentado (até 1 char por chunk) | ✅ reconstrói a chamada |
+| `</tool_call>` dentro de strings de argumentos | ✅ não trunca |
+| JSON malformado (aspas/chaves faltando) | ✅ repara |
+| JSON duplamente escapado (`\"name\"`) | ✅ desescapa |
+| Nome fuzzy (`readFile` → `read_file`) | ✅ fuzzy-match |
+| Chamada sem tags (JSON cru no texto) | ✅ extrai |
+| Vazamento do formato interno DSML | ✅ converte ao vivo |
+| Múltiplas chamadas por turno | ✅ |
 
 ## 🧪 Testes
 
 ```bash
-npm test
+npm test   # 95 testes do parser, recuperação de JSON e fluxos de tools
 ```
-
-95 testes cobrindo o parser de tool calls e a recuperação de JSON: streams fragmentados (até 1 char por chunk), tags dentro de strings, nomes fuzzy, tags faltando, chamadas sem wrapper, cap por turno, JSON duplamente escapado e mais.
-
----
 
 ## 🛠️ Scripts
 
 | Comando | Descrição |
 |---------|-----------|
-| `npm start` | Servidor em produção |
+| `npm start` | Servidor em produção (headless) |
 | `npm run dev` | Desenvolvimento com hot-reload |
-| `npm run login` | Login visível no navegador e persistência da sessão |
+| `npm run login` | Login visível + persistência de sessão |
 | `npm test` | Suite de testes |
-| `npm run build` | Compila TypeScript para `dist/` |
+| `npm run build` | Compila para `dist/` |
 | `bash restart-server.sh` | Reinício limpo do servidor |
-| `bash clean-and-login.sh` | Limpa processos/locks e abre o login |
-
----
+| `bash clean-and-login.sh` | Limpa locks e reabre o login |
 
 ## 🔍 Troubleshooting
 
-- **`Failed to create a ProcessSingleton`**: o perfil do navegador está em uso. Encerre o servidor (`bash restart-server.sh` ou `fuser -k 3000/tcp`) e remova `deepseek_profile/Singleton*` antes do login.
-- **Porta 3000 ocupada por código antigo**: `fuser -k 3000/tcp` mata quem segura a porta (o processo filho do tsx sobrevive a pkill comum).
-- **Agente "perde o contexto"**: procure linhas `[Compression]` no log do servidor — elas mostram exatamente o que foi mantido/descartado. Com `CONTEXT_TOKENS` alto, a compressão só entra acima do limite configurado.
-- **`400 context_length_exceeded`**: o prompt (mesmo truncado) excede `CONTEXT_TOKENS`. Aumente o valor no `.env` ou reduza a conversa.
-- **Tool call não chega estruturado**: verifique se o cliente está declarando as `tools` no request e rode o servidor com `TOOLCALL_DEBUG=1` para ver o parser em ação.
+<details>
+<summary><b>Failed to create a ProcessSingleton</b></summary>
 
----
+O perfil do navegador está em uso por outro processo. `bash restart-server.sh` (ou `fuser -k 3000/tcp`), remova `deepseek_profile/Singleton*` e tente o login de novo.
+</details>
+
+<details>
+<summary><b>Porta 3000 ocupada por código antigo</b></summary>
+
+O processo filho do tsx sobrevive ao `pkill`. Use `fuser -k 3000/tcp` — ou o `restart-server.sh`, que já faz tudo.
+</details>
+
+<details>
+<summary><b>Agente "perde o contexto" no meio da tarefa</b></summary>
+
+Procure linhas `[Compression]` no log do servidor: elas mostram exatamente o que foi mantido/descartado. Com `CONTEXT_TOKENS` alto, a compressão só entra acima do limite configurado.
+</details>
+
+<details>
+<summary><b>400 context_length_exceeded</b></summary>
+
+O prompt excede `CONTEXT_TOKENS` mesmo após truncamento. Aumente o valor no `.env` ou resuma a conversa.
+</details>
 
 ## 📄 Licença
 
 Distribuído sob a licença MIT — veja [LICENSE](LICENSE).
 
----
-
 ## ⚠️ Disclaimer
 
-> Este projeto é fornecido estritamente para fins educacionais e de pesquisa.
+> Este projeto é fornecido estritamente para **fins educacionais e de pesquisa**.
 
 Automatização de serviços de terceiros pode violar os termos de uso da plataforma. O usuário é integralmente responsável pelo uso deste software, incluindo conformidade com leis, regulamentos e contratos de serviço aplicáveis. **Use por sua conta e risco.**

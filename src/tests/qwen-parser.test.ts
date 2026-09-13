@@ -750,9 +750,9 @@ test("StreamingToolParser: recovers tool call with unclosed outer brace and qpx_
     } as any,
   ];
   const parser = new StreamingToolParser(ASK_TOOLS);
-  const input = '<qpx_call>\n{"name":"AskUserQuestion","arguments":{"questions":[{"question":"Which port?","options":[{"label":"A"},{"label":"B"}]}]}}\n</qpx_call>';
+  const input = '<tool_call>\n{"name":"AskUserQuestion","arguments":{"questions":[{"question":"Which port?","options":[{"label":"A"},{"label":"B"}]}]}}\n</tool_call>';
   // Missing one closing brace: }]}] instead of }]}]}}
-  const brokenInput = input.replace(/\}\}\n<\/qpx_call>/, "}\n</qpx_call>");
+  const brokenInput = input.replace(/\}\}\n<\/qpx_call>/, "}\n</tool_call>");
   const res1 = parser.feed(brokenInput);
   const res2 = parser.flush();
   const allCalls = [...res1.toolCalls, ...res2.toolCalls];
@@ -770,7 +770,7 @@ test("StreamingToolParser: recovers tool call with dropped opening quote before 
     } as any,
   ];
   const parser = new StreamingToolParser(EDIT_TOOLS);
-  const input = '<qpx_call>\n{"name":"Edit","arguments":{"file_path":"test.cs", "old_string":                // MCP\\n                InpPrintState = true;"}}\n</qpx_call>';
+  const input = '<tool_call>\n{"name":"Edit","arguments":{"file_path":"test.cs", "old_string":                // MCP\\n                InpPrintState = true;"}}\n</tool_call>';
   const res1 = parser.feed(input);
   const res2 = parser.flush();
   const allCalls = [...res1.toolCalls, ...res2.toolCalls];
