@@ -229,9 +229,7 @@ npm test
 
 ## 📄 Licença
 
-Distribuído sob a licença ISC — veja [LICENSE](LICENSE).
-
-Partes do parser de tool calls e da recuperação de JSON são derivadas do projeto [QwenProxy](https://github.com/johngbl/qwenproxy) (ISC) — veja [NOTICES](NOTICES).
+Distribuído sob a licença MIT — veja [LICENSE](LICENSE).
 
 ---
 

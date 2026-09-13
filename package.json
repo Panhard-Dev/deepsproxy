@@ -11,7 +11,7 @@
   },
   "keywords": ["deepseek", "proxy", "openai", "tool-calling", "playwright"],
   "author": "Panhard-Dev",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
     "@hono/node-server": "^2.0.2",
     "dotenv": "^17.4.2",
