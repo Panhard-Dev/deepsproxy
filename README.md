@@ -2,276 +2,183 @@
 
 # 🐋 DeepsProxy
 
-**Proxy local compatível com OpenAI para os modelos do DeepSeek — multi-conta, tool calling à prova de bala e dashboard próprio.**
+**Use os modelos do DeepSeek no seu programa, como se fosse a API da OpenAI.**
 
 [![CI](https://img.shields.io/github/actions/workflow/status/Panhard-Dev/deepsproxy/ci.yml?branch=main&label=tests&style=flat-square)](https://github.com/Panhard-Dev/deepsproxy/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
-[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Node](https://img.shields.io/badge/node-%3E%3D20-339933?style=flat-square&logo=node.js&logoColor=white)](https://nodejs.org/)
-[![Hono](https://img.shields.io/badge/Hono-4.x-E36002?style=flat-square)](https://hono.dev/)
-[![Playwright](https://img.shields.io/badge/Playwright-1.59-2EBA6B?style=flat-square&logo=playwright&logoColor=white)](https://playwright.dev/)
 
-*Exponha os modelos do `chat.deepseek.com` como uma API OpenAI local — qualquer SDK, qualquer cliente, com painel de controle incluído.*
+**Instala → adiciona sua conta → usa.** Com painel de controle, várias contas e login automático.
 
 </div>
 
 ---
 
-## 📸 Dashboard
+## 🖼️ Como fica o painel
 
-O proxy vem com um **painel de controle integrado** no tema do DeepSeek — disponível em `http://localhost:3000/admin`.
+![Painel do DeepsProxy](docs/screenshots/usage.png)
 
-| | |
-|---|---|
-| ![Usage](docs/screenshots/usage.png) | ![Modelos](docs/screenshots/models.png) |
-| *Usage — tokens, requisições e saúde* | *Modelos — teste real e copiar ID* |
-| ![Logs](docs/screenshots/logs.png) | ![Contas](docs/screenshots/accounts.png) |
-| *Logs — saída do servidor em tempo real* | *Contas — stack multi-conta* |
+---
 
-Tela de desbloqueio do painel (senha configurável, sem popups nativos do navegador):
+## 🚀 Como usar — 3 passos
 
-![Lock](docs/screenshots/lock.png)
-
-## ✨ Destaques
-
-- 🤖 **100% compatível com OpenAI** — `/v1/chat/completions`, `/v1/models`, `/health`, streaming SSE e API key opcional
-- 🧑‍🤝‍🧑 **Multi-conta com rotação inteligente** — empilhe várias contas; o proxy gruda na saudável, põe a que falha em cooldown e troca sozinho (login: 5min, quota: 15min)
-- 🔁 **Auto-login** — sessão expirou? O proxy reloga sozinho no meio do request, sem você perceber
-- 🖥️ **Dashboard próprio** — Usage, Logs em tempo real, teste de modelos com 1 clique e gerenciamento de contas
-- 🔨 **Tool calling robusto** — sobrevive a streams fragmentados, JSON malformado, tags faltando, nomes fuzzy (`getWeather` → `get_weather`) e chamadas sem tags
-- 🧬 **Normalizador DSML** — converte o formato interno que o modelo às vezes vaza (`<｜｜DSML｜｜ invoke ...>`) em `tool_calls` estruturado, em tempo real
-- 📏 **Contexto gigante configurável** — `CONTEXT_TOKENS` (default 1M); a janela é **configuração, não adivinhação**: erro de rede nunca encolhe seu contexto
-- ✂️ **Truncamento inteligente** — preserva pares atômicos `assistant(tool_calls) + tool`, mantém as mensagens recentes e avisa quando corta
-- 🧾 **Rejeição limpa** — input gigante demais volta como `400 context_length_exceeded` no formato OpenAI, sem queimar navegador
-- 💾 **Sessão persistente** — login uma vez no navegador, sessão salva para sempre
-- ✅ **95 testes** rodando no CI
-
-## 🏗️ Arquitetura
-
-```mermaid
-flowchart LR
-    A["🖥️ Cliente OpenAI<br/>(SDK / IDE / agente)"] -->|"HTTP /v1/chat/completions"| B["⚡ DeepsProxy<br/>Hono + TypeScript"]
-    B -->|"conta saudável<br/>(rotação + cooldown)"| C["🎭 Playwright<br/>1 Chromium, N contextos"]
-    C -->|"cookies + PoW por conta"| D["🌊 chat.deepseek.com"]
-    D -->|"stream SSE"| C
-    C --> B
-    B -->|"'tool_calls' estruturado"| A
-    B --- E["📊 Dashboard /admin<br/>Usage · Logs · Modelos · Contas"]
-```
-
-## 🚀 Começando
+### 1️⃣ Instalar
 
 ```bash
-# 1. Clonar e instalar
 git clone https://github.com/Panhard-Dev/deepsproxy.git
 cd deepsproxy
 npm install
 npx playwright install chromium
-
-# 2. Configurar o .env (copie o .env.example)
 cp .env.example .env
-
-# 3. Subir o servidor
 npm start
 ```
 
-Pronto. Na primeira execução, adicione sua conta em **`/admin` → Contas → "Empilhar conta"** (email + senha, o proxy loga sozinho) — ou use o login manual: `npm run login`.
+### 2️⃣ Adicionar sua conta
 
-> Servidor travando o perfil? `bash clean-and-login.sh` limpa processos/locks e reabre o login.
+1. Abra **http://localhost:3000/admin** no navegador
+2. Digite a senha do painel — **padrão: `123456`**
+3. Vá em **Contas → "Empilhar conta"** → coloque email e senha do DeepSeek
+4. Pronto: o proxy loga sozinho e a conta entra na rotação
 
-## ⚙️ Configuração
+> Pode adicionar quantas contas quiser. Se uma der problema, o proxy troca pra outra automaticamente.
 
-| Variável | Descrição | Default |
-|----------|-----------|---------|
-| `PORT` | Porta HTTP do servidor | `3000` |
-| `API_KEY` | Chave exigida pelo **proxy** (`Authorization: Bearer` ou `X-API-Key`) | *(sem auth)* |
-| `ADMIN_PASSWORD` | Senha do **painel** `/admin` | `123456` |
-| `DEEPSEEK_EMAIL` / `DEEPSEEK_PASSWORD` | Conta inicial (migrada pro stack no primeiro boot) | — |
-| `PLAYWRIGHT_HEADLESS` | Navegador headless | `true` |
-| `PLAYWRIGHT_TIMEOUT` | Timeout do Playwright (ms) | `30000` |
-| `CONTEXT_TOKENS` | Janela de contexto em tokens | `1000000` |
-| `DEEPSEEK_AUTOLOGIN_WAIT_MS` | Espera do auto-login (para desafios humanos) | `90000` |
-| `DEEPSEEK_TOOL_OPEN` / `DEEPSEEK_TOOL_CLOSE` | Tags canônicas de tool call | `<tool_call>` / `</tool_call>` |
-| `TOOLCALL_DEBUG` | `1` = logs de debug do parser | *(off)* |
+### 3️⃣ Usar no seu programa
 
-> 🔐 `accounts.json` (senhas do stack) e `accounts_storage/` (sessões) ficam **fora do git** — nunca commitados.
-
-## 📊 Dashboard Admin
-
-Acesse `http://localhost:3000/admin` e digite a senha do painel (`ADMIN_PASSWORD`). Quatro áreas:
-
-| Área | O que mostra |
-|------|--------------|
-| **📊 Usage** | Requisições, tokens (prompt/completion), taxa de sucesso, gráfico de 24h, tabela por modelo e requisições recentes com duração |
-| **📜 Logs** | Saída do servidor em tempo real (últimas 800 linhas) com filtros Info/Avisos/Erros e auto-refresh |
-| **🧩 Modelos** | Todos os modelos com **Testar** (chamada real com latência), **Copiar ID** e **Testar todos** |
-| **👤 Contas** | Stack de contas: status de cada uma (em uso / logada / cooldown), falhas, **Renovar login**, remover e **Empilhar conta** |
-
-O painel aceita `ADMIN_PASSWORD` **ou** a `API_KEY` — e a senha simples nunca abre a API do proxy (são autenticações separadas).
-
-## 👥 Multi-conta (account stacking)
-
-1. No painel: **Contas → "Empilhar conta"** → email e senha → o proxy loga sozinho e entra na rotação
-2. **Rotação inteligente**:
-   - O proxy fica **grudado** na conta saudável (sem trocar à toa)
-   - Sessão expirou → tenta **relogar sozinho** com as credenciais salvas
-   - Persistiu → **cooldown 5min** (login) ou **15min** (quota/limite) e a próxima requisição já sai na outra conta
-   - Todas em cooldown → `429` claro informando em minutos quais voltam
-3. Cada conta tem sessão própria (cookies isolados por `storageState`) em **um único Chromium compartilhado**
-
-## 📡 API
-
-<details open>
-<summary><b>POST /v1/chat/completions</b></summary>
-
-```bash
-curl http://localhost:3000/v1/chat/completions \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"Olá!"}],"stream":true}'
-```
-
-Em SDKs OpenAI, basta apontar o `baseURL`:
+Só aponte o cliente para o proxy:
 
 ```ts
 import OpenAI from 'openai';
 
 const client = new OpenAI({
-  baseURL: 'http://localhost:3000/v1',
-  apiKey: 'sua-api-key',
+  baseURL: 'http://localhost:3000/v1',      // endereço do proxy
+  apiKey: 'a-chave-do-env',                  // a API_KEY do seu .env
 });
 
 const res = await client.chat.completions.create({
   model: 'deepseek-v4-flash',
-  messages: [{ role: 'user', content: 'Explique TypeScript' }],
+  messages: [{ role: 'user', content: 'Olá!' }],
 });
 ```
+
+Funciona com qualquer ferramenta que aceite API da OpenAI (Cursor, Continue, LZ, scripts...).
+
+---
+
+## 🖥️ O que tem no painel (`/admin`)
+
+| Aba | Pra que serve |
+|-----|---------------|
+| **📊 Usage** | Quantas requisições e tokens você gastou |
+| **📜 Logs** | Tudo que o servidor está fazendo, ao vivo |
+| **🧩 Modelos** | Testar cada modelo com 1 clique e copiar o ID |
+| **👤 Contas** | Adicionar, remover e acompanhar suas contas |
+
+<details>
+<summary><b>Ver mais telas do painel</b></summary>
+
+| | |
+|---|---|
+| ![Modelos](docs/screenshots/models.png) | ![Contas](docs/screenshots/accounts.png) |
+| ![Logs](docs/screenshots/logs.png) | ![Desbloqueio](docs/screenshots/lock.png) |
+
+</details>
+
+---
+
+## ❓ Perguntas rápidas
+
+<details>
+<summary><b>Quais modelos posso usar?</b></summary>
+
+| ID no pedido | O que é |
+|--------------|---------|
+| `deepseek-v4-flash` | Flash, modo normal |
+| `deepseek-v4-flash-thinking` | Flash, com raciocínio |
+| `deepseek-v4.1-flash` | Apelido do Flash normal |
+| `deepseek-v4.1-flash-thinking` | Apelido do Flash com raciocínio |
+| `deepseek-v4-pro` | Pro, modo normal |
+| `deepseek-v4-pro-thinking` | Pro, com raciocínio |
 </details>
 
 <details>
-<summary><b>GET /v1/models</b></summary>
+<summary><b>Como troco a senha do painel?</b></summary>
 
-| ID | Modelo real | Modo |
-|----|-------------|------|
-| `deepseek-v4-flash` | Flash | normal |
-| `deepseek-v4-flash-thinking` | Flash | raciocínio |
-| `deepseek-v4.1-flash` | Flash | normal *(alias)* |
-| `deepseek-v4.1-flash-thinking` | Flash | raciocínio *(alias)* |
-| `deepseek-v4-pro` | Pro/Expert | normal |
-| `deepseek-v4-pro-thinking` | Pro/Expert | raciocínio |
-
-O roteamento é pelo nome: `thinking` → ativa raciocínio; `pro` → modelo Expert.
+No arquivo `.env`, mude a linha `ADMIN_PASSWORD=123456` para a senha que quiser e reinicie com `bash restart-server.sh`.
 </details>
 
 <details>
-<summary><b>Tool calling (exemplo completo)</b></summary>
+<summary><b>Como funciona a troca automática de contas?</b></summary>
 
-```jsonc
-// 1. Declare as tools (formato OpenAI padrão)
-{
-  "model": "deepseek-v4-flash",
-  "messages": [{ "role": "user", "content": "Tempo em São Paulo?" }],
-  "tools": [{
-    "type": "function",
-    "function": {
-      "name": "get_weather",
-      "description": "Obter previsão do tempo",
-      "parameters": {
-        "type": "object",
-        "properties": { "location": { "type": "string" } },
-        "required": ["location"]
-      }
-    }
-  }]
-}
+O proxy fica usando sempre a mesma conta enquanto ela estiver boa.
 
-// 2. O modelo responde
-// finish_reason: "tool_calls"
-// { "tool_calls": [{ "id": "call_x", "function": { "name": "get_weather",
-//    "arguments": "{\"location\":\"São Paulo\"}" } }] }
+- A sessão expirou? → ele **loga sozinho** de novo
+- A conta der problema? → ela fica de **castigo** por um tempo (5 a 15 min) e o proxy **passa a usar a próxima conta**
+- Todas de castigo? → você recebe um erro claro dizendo em quantos minutos volta
 
-// 3. Execute e devolva: role "tool" + tool_call_id correspondente
-```
-
-> **Nota:** as ferramentas são executadas pelo **cliente** (seu agente) — o proxy só traduz o protocolo.
-
+Adicione contas no painel, aba **Contas**.
 </details>
 
-## 🔧 O que o parser tolera
+<details>
+<summary><b>Funciona com ferramentas (tool calling)?</b></summary>
 
-| Situação do modelo | Comportamento |
-|--------------------|---------------|
-| Stream fragmentado (até 1 char por chunk) | ✅ reconstrói a chamada |
-| `</tool_call>` dentro de strings de argumentos | ✅ não trunca |
-| JSON malformado (aspas/chaves faltando) | ✅ repara |
-| JSON duplamente escapado (`\"name\"`) | ✅ desescapa |
-| Nome fuzzy (`readFile` → `read_file`) | ✅ fuzzy-match |
-| Chamada sem tags (JSON cru no texto) | ✅ extrai |
-| Vazamento do formato interno DSML | ✅ converte ao vivo |
-| Múltiplas chamadas por turno | ✅ |
+Sim — formato OpenAI padrão. Seu agente declara as ferramentas, o proxy entrega as chamadas no formato certo, e tolera até quando o modelo responde "torto" (JSON quebrado, tags faltando, formato interno dele vazando...).
+</details>
 
-## 🧪 Testes
+<details>
+<summary><b>Quais são todas as configurações do .env?</b></summary>
 
-```bash
-npm test   # 95 testes do parser, recuperação de JSON e fluxos de tools
-```
+| Variável | Pra que serve | Padrão |
+|----------|---------------|--------|
+| `PORT` | Porta do servidor | `3000` |
+| `API_KEY` | Senha que os **clientes** usam pra falar com o proxy | *(sem)* |
+| `ADMIN_PASSWORD` | Senha do **painel** | `123456` |
+| `DEEPSEEK_EMAIL` / `DEEPSEEK_PASSWORD` | Conta inicial (vai pro stack no primeiro boot) | — |
+| `PLAYWRIGHT_HEADLESS` | Navegador invisível | `true` |
+| `PLAYWRIGHT_TIMEOUT` | Timeout do Playwright (ms) | `30000` |
+| `CONTEXT_TOKENS` | Limite de contexto em tokens | `1000000` |
+| `DEEPSEEK_AUTOLOGIN_WAIT_MS` | Espera do login automático (ms) | `90000` |
+| `TOOLCALL_DEBUG` | `1` = logs detalhados do parser | *(off)* |
+</details>
 
-## 🛠️ Scripts
+<details>
+<summary><b>Deu problema. E agora?</b></summary>
 
-| Comando | Descrição |
+| Problema | Solução |
+|----------|---------|
+| "Failed to create a ProcessSingleton" | O perfil tá em uso: `bash restart-server.sh`, apague `deepseek_profile/Singleton*` |
+| Porta 3000 ocupada | `bash restart-server.sh` resolve (mata o processo antigo) |
+| Erro `429 no_account_available` | Todas as contas de castigo — espere os minutos que a mensagem diz, ou adicione outra conta |
+| Resposta veio vazia / estranha | Abra o painel → Logs e veja a linha do erro |
+| `context_length_exceeded` | A conversa é grande demais: aumente `CONTEXT_TOKENS` no `.env` |
+</details>
+
+<details>
+<summary><b>Comandos disponíveis</b></summary>
+
+| Comando | O que faz |
 |---------|-----------|
-| `npm start` | Servidor em produção (headless) |
-| `npm run dev` | Desenvolvimento com hot-reload |
-| `npm run login` | Login manual visível (fallback) |
-| `npm test` | Suite de testes |
-| `npm run build` | Compila para `dist/` |
-| `bash restart-server.sh` | Reinício limpo do servidor |
-| `bash clean-and-login.sh` | Limpa locks e reabre o login |
-
-## 🔍 Troubleshooting
-
-<details>
-<summary><b>Failed to create a ProcessSingleton</b></summary>
-
-O perfil do navegador está em uso por outro processo. `bash restart-server.sh` (ou `fuser -k 3000/tcp`), remova `deepseek_profile/Singleton*` e tente o login de novo.
+| `npm start` | Liga o servidor |
+| `npm run dev` | Liga com recarga automática (pra desenvolver) |
+| `npm run login` | Abre navegador pra logar na mão (raramente necessário) |
+| `npm test` | Roda os 95 testes |
+| `npm run build` | Compila o TypeScript |
+| `bash restart-server.sh` | Reinicia tudo limpo |
+| `bash clean-and-login.sh` | Limpa travas e abre o login |
 </details>
 
-<details>
-<summary><b>Porta 3000 ocupada por código antigo</b></summary>
+## 🏗️ Como funciona por dentro
 
-O processo filho do tsx sobrevive ao `pkill`. Use `fuser -k 3000/tcp` — ou o `restart-server.sh`, que já faz tudo.
-</details>
-
-<details>
-<summary><b>429 no_account_available</b></summary>
-
-Todas as contas estão em cooldown. Aguarde os minutos indicados na mensagem ou empilhe outra conta no painel.
-</details>
-
-<details>
-<summary><b>Agente "perde o contexto" no meio da tarefa</b></summary>
-
-Procure linhas `[Compression]` no log do servidor (ou no painel, aba Logs): elas mostram exatamente o que foi mantido/descartado. Com `CONTEXT_TOKENS` alto, a compressão só entra acima do limite configurado.
-</details>
-
-<details>
-<summary><b>400 context_length_exceeded</b></summary>
-
-O prompt excede `CONTEXT_TOKENS` mesmo após truncamento. Aumente o valor no `.env` ou resuma a conversa.
-</details>
-
-<details>
-<summary><b>Tool call não chega estruturado</b></summary>
-
-Verifique se o cliente está declarando as `tools` no request e rode o servidor com `TOOLCALL_DEBUG=1` — as linhas `[parser]` aparecem no painel, aba Logs.
-</details>
+```mermaid
+flowchart LR
+    A["🖥️ Seu programa"] -->|"pedido"| B["⚡ DeepsProxy"]
+    B -->|"conta saudável"| C["🎭 Playwright<br/>1 navegador, várias sessões"]
+    C --> D["🌊 chat.deepseek.com"]
+    D -->|"resposta"| C --> B --> A
+```
 
 ## 📄 Licença
 
-Distribuído sob a licença MIT — veja [LICENSE](LICENSE).
+MIT — veja [LICENSE](LICENSE).
 
-## ⚠️ Disclaimer
+## ⚠️ Aviso
 
-> Este projeto é fornecido estritamente para **fins educacionais e de pesquisa**.
-
-Automatização de serviços de terceiros pode violar os termos de uso da plataforma. O usuário é integralmente responsável pelo uso deste software, incluindo conformidade com leis, regulamentos e contratos de serviço aplicáveis. **Use por sua conta e risco.**
+> Projeto **educacional e de pesquisa**. Automatizar serviços de terceiros pode violar os termos de uso deles — use por sua conta e risco.
