@@ -17,22 +17,25 @@
  * DeepSeek uses U+FF5C (｜) fullwidth vertical bars; ASCII '|' is accepted too.
  */
 
-const BAR = '[｜|]{1,2}';
+const BAR = '(?:\\s*[｜|]\\s*){1,2}';
+// O modelo às vezes normaliza os delimitadores para guillemets
+const LT = '[<‹«]';
+const GT = '[>›»]';
 
-function makeOpenRe(): RegExp {
-  return new RegExp(`<${BAR}\\s*DSML${BAR}\\s*calls\\s*>`, 'gi');
+export function makeOpenRe(): RegExp {
+  return new RegExp(String.raw`${LT}${BAR}\s*DSML${BAR}\s*calls\s*${GT}`, 'gi');
 }
-function makeCloseRe(): RegExp {
-  return new RegExp(`</${BAR}\\s*DSML${BAR}\\s*calls\\s*>`, 'i');
+export function makeCloseRe(): RegExp {
+  return new RegExp(String.raw`[<‹«]/${BAR}\s*DSML${BAR}\s*calls\s*${GT}`, 'i');
 }
-function makeInvokeRe(): RegExp {
-  return new RegExp(`<${BAR}\\s*DSML${BAR}\\s*invoke\\s+name\\s*=\\s*"([^"]*)"[^>]*>([\\s\\S]*?)</${BAR}\\s*DSML${BAR}\\s*invoke\\s*>`, 'gi');
+export function makeInvokeRe(): RegExp {
+  return new RegExp(String.raw`${LT}${BAR}\s*DSML${BAR}\s*invoke\s+name\s*=\s*"([^"]*)"[^>›»]*[>›»]([\s\S]*?)</${BAR}\s*DSML${BAR}\s*invoke\s*[>›»]`, 'gi');
 }
-function makeParamRe(): RegExp {
-  return new RegExp(`<${BAR}\\s*DSML${BAR}\\s*parameter\\s+name\\s*=\\s*"([^"]*)"[^>]*?(?:\\s+string\\s*=\\s*"(true|false)")?[^>]*>([\\s\\S]*?)</${BAR}\\s*DSML${BAR}\\s*parameter\\s*>`, 'gi');
+export function makeParamRe(): RegExp {
+  return new RegExp(String.raw`${LT}${BAR}\s*DSML${BAR}\s*parameter\s+name\s*=\s*"([^"]*)"[^>]*?(?:\s+string\s*=\s*"(true|false)")?[^>›»]*[>›»]([\s\S]*?)</${BAR}\s*DSML${BAR}\s*parameter\s*[>›»]`, 'gi');
 }
 
-const HOLD_TAGS = ['<｜｜DSML｜｜ calls>', '</｜｜DSML｜｜ calls>', '<||DSML|| calls>', '</||DSML|| calls>'];
+const HOLD_TAGS = ['<｜｜DSML｜｜ calls>', '</｜｜DSML｜｜ calls>', '<||DSML|| calls>', '</||DSML|| calls>', '‹｜｜DSML｜｜ calls>', '‹||DSML|| calls>', '‹|', '‹| |', '<|', '<| |'];
 
 /** How much of the buffer can be safely emitted: everything except a suffix that could be the start of a DSML tag. */
 function safeEmitLength(buf: string): number {
